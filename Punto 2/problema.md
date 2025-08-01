@@ -1,4 +1,4 @@
-## Ejercicio 2
+# Ejercicio 2
 
 Notebook "Maze_problem.ipynb"
 

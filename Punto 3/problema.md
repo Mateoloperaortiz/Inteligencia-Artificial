@@ -1,6 +1,6 @@
-## Ejercicio 3
+# Ejercicio 3
 
-### Navegación en una Red de Metro
+## Navegación en una Red de Metro
 
 **Contexto del Problema:** Como desarrollador de la alcaldía de una importante ciudad, se le solicita implementar un algoritmo que permita a los pasajeros encontrar la ruta más corta entre dos estaciones del metro usando dos estrategias diferentes.
 

@@ -1,4 +1,4 @@
-## Ejercicio 1
+# Ejercicio 1
 
 A partir del Notebook "2.BestFirstSearch.ipynb" de la semana 2, resolver el problema que soluciona la ruta óptima hasta Bucharest, mediante el algoritmo de A*Search usando la heurística.
 
