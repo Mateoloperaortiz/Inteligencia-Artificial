@@ -68,11 +68,11 @@ La heurística `heuristic` usada (distancia en línea recta a Bucharest) es:
 - **Optimalidad** → Con heurística admisible y consistente, siempre devuelve la ruta de menor `path_cost`.
 - **Eficiencia** → Reduce el número de nodos explorados al usar `heuristic` para guiar la búsqueda.
 
-**Resultado obtenido (ejemplo con datos del código):**
+**Resultado obtenido:**
 - **Ruta**: `Arad → Sibiu → Rimnicu Vilcea → Pitesti → Bucharest`
 - **Costo total (`path_cost`)**: `418 km`
-- **Verificación**: Esta ruta es la más corta según el grafo `romania_map` y la heurística definida.
 
----
+
+
 
 ---
