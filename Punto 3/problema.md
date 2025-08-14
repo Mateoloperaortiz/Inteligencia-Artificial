@@ -44,3 +44,31 @@ Este metro tiene 10 estaciones, las cuales están conectadas de la siguiente man
 4. **Comparación:** Ejecuta ambos algoritmos para encontrar la ruta más corta entre las estaciones A y J. Compara los resultados obtenidos en términos de tiempo de ejecución y memoria.
 
 5. Explica las diferencias encontradas entre ambos algoritmos.
+
+
+Agosto 1:
+  Fixed Bugs:
+
+  1. Critical IDS Bug: The original IDS implementation incorrectly used an
+  explored set that was shared across branches, causing incorrect behavior.
+  Fixed by removing the explored set entirely (as per standard IDS).
+  2. BFS Performance Issue: Fixed O(n) frontier membership checking by
+  maintaining a separate frontier_states set for O(1) lookups.
+  3. Goal Test Bug: The algorithms ignored the goal parameter and always
+  searched for 'J'. Fixed to properly use the provided goal parameter.
+  4. Memory Management: Added proper error handling for tracemalloc to prevent
+  crashes on exceptions.
+  5. Type Hints: Fixed incorrect any to Any in type annotations.
+  6. Visualization Dependencies: Added dependency checking and error handling
+  for missing packages.
+
+  New Files Created:
+
+  - metro_search_fixed.py: Corrected implementation with all bugs fixed
+  - comprehensive_tests.py: 11+ unit tests covering edge cases and validation
+  - visualize_metro_fixed.py: Improved visualization with better error handling
+  - bug_fixes_summary.md: Detailed documentation of all fixes
+
+  All tests now pass successfully, and the algorithms correctly find the
+  shortest path (A → C → F → J) with proper performance metrics.
+  
