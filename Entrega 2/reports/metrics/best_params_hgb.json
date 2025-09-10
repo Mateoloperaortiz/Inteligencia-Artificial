@@ -1,0 +1,6 @@
+{
+  "clf__min_samples_leaf": 30,
+  "clf__max_leaf_nodes": 63,
+  "clf__max_depth": null,
+  "clf__learning_rate": 0.2
+}

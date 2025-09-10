@@ -1,0 +1,17 @@
+{
+  "rf": {
+    "model_path": "models/rf.pkl",
+    "cv_results_path": "reports/metrics/cv_results_rf.csv",
+    "best_params_path": "reports/metrics/best_params_rf.json"
+  },
+  "mlp": {
+    "model_path": "models/mlp.pkl",
+    "cv_results_path": "reports/metrics/cv_results_mlp.csv",
+    "best_params_path": "reports/metrics/best_params_mlp.json"
+  },
+  "hgb": {
+    "model_path": "models/hgb.pkl",
+    "cv_results_path": "reports/metrics/cv_results_hgb.csv",
+    "best_params_path": "reports/metrics/best_params_hgb.json"
+  }
+}
