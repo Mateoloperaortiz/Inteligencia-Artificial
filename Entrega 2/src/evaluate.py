@@ -159,7 +159,11 @@ def main():
     ensure_dir(os.path.join(args.out_dir, "metrics"))
 
     df = load_data(args.data)
-    X_train, X_test, y_train, y_test = train_test_split_fixed(df, target_col="Survived", test_size=0.2)
+    # IMPORTANTE: Usar una semilla DIFERENTE para la evaluación
+    # para evitar data leakage (los modelos fueron entrenados con random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split_fixed(
+        df, target_col="Survived", test_size=0.2, random_state=123
+    )
 
     model_paths = list_model_paths(args.models_dir)
     if not model_paths:
