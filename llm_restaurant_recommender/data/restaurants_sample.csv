@@ -1,0 +1,4 @@
+name,lat,lon,cuisine,tags
+Pizzería Da Marco,6.2100,-75.5710,italiano,"{'addr:street':'Cra 35', 'price':'$'}"
+Sushi Corner,6.2115,-75.5725,japones,"{'addr:street':'Cll 10', 'price':'$$'}"
+La Casa del Ajiaco,6.2085,-75.5690,colombiano,"{'addr:street':'Parque','price':'$'}"

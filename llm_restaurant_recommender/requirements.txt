@@ -1,0 +1,6 @@
+streamlit>=1.20
+pandas
+requests
+geopy
+# Optional (install if you want local GPT4All):
+# gpt4all
