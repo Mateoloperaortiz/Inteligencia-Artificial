@@ -1,54 +1,85 @@
-# Asistente LLM - Recomendador de Restaurantes (local / gratis)
+# Asistente LLM para Recomendación de Restaurantes
 
-Prototipo en Python que usa OpenStreetMap/Overpass para buscar restaurantes y genera explicaciones cortas con un LLM local o un fallback.
+Prototipo académico que permite hacer consultas en lenguaje natural (p. ej. *“Quiero un italiano barato en El Poblado”*) y devolver restaurantes reales/simulados basados en:
+- tipo de cocina (extraído de etiquetas de OpenStreetMap y dataset local),
+- rango de precio (heurísticas + datos locales),
+- proximidad geográfica (distancia Haversine),
+- explicaciones generadas por un LLM local o fallback.
 
-Requisitos
-- Python 3.10+
-- Paquetes: ver `requirements.txt` (instalación reseñada abajo)
-- No se usan APIs de pago por defecto.
+## Requisitos
+- Windows / Linux / macOS con Python **3.10+**.
+- Conexión a internet para geocodificación y Overpass (opcional si usas solo dataset local).
+- Modelo LLM local (opcional, ver abajo). Sin LLM la app usa textos plantilla.
 
-Cómo ejecutar
-1. Crear y activar un entorno virtual (ejemplo PowerShell):
-
+## Instalación Rápida
 ```powershell
-python -m venv .venv; .\.venv\Scripts\Activate.ps1
+git clone <url-del-repo>
+cd llm_restaurant_recommender
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1   # en Linux/Mac: source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-2. Ejecutar la app:
+## Configurar el LLM (opciones)
 
+### Opción A: Hugging Face (Phi-3 Mini recomendado)
+1. Instala el CLI si no lo tienes: `python -m pip install "huggingface_hub[cli]"`.
+2. Inicia sesión con tu token:
+   ```powershell
+   huggingface-cli login --token <tu-token-hf>
+   ```
+3. Descarga el modelo:
+   ```powershell
+   huggingface-cli download microsoft/Phi-3-mini-4k-instruct --local-dir models/phi-3-mini
+   ```
+4. Indica la ruta a la app (persistente):
+   ```powershell
+   setx HF_MODEL "llm_restaurant_recommender\models\phi-3-mini"
+   ```
+   *(Si prefieres usar la caché global de HF, puedes omitir el paso 3 y usar `setx HF_MODEL "microsoft/Phi-3-mini-4k-instruct"`; el modelo se descargará en la primera ejecución.)*
+
+### Opción B: GPT4All
+1. `pip install gpt4all`.
+2. Descarga un modelo `.bin` desde <https://gpt4all.io/models/>.
+3. Define `GPT4ALL_MODEL_PATH` con la ruta al archivo o ajusta `models/local_model_integration.py`.
+
+### Sin LLM
+Si no hay modelo disponible, el sistema genera explicaciones cortas usando una plantilla: la app sigue funcionando (no se detiene).
+
+## Datos
+- `data/restaurants_sample.csv`: muestra de restaurantes con coordenadas y etiquetas (puedes regenerar con `python data/generate_dataset.py`).
+- `data/generated_reviews.csv`: espacio para reseñas simuladas (opcional, actualmente vacío).
+- `utils/geolocation.py` combina resultados de Overpass y el CSV local; si hay datos locales, se fusionan y se eliminan duplicados.
+
+**Importante:** Los pesos de los modelos (varios GB) están ignorados (`models/phi-3-mini/`). Cada desarrollador debe descargarlos localmente siguiendo los pasos anteriores.
+
+## Ejecución
 ```powershell
 streamlit run app.py
 ```
 
-Modelos LLM
-- El módulo `models/local_model_integration.py` intenta usar `gpt4all` si está instalado y si tienes un modelo en local.
-- Si no quieres instalar un modelo, el sistema usa un fallback basado en plantillas para generar explicaciones.
+### Flujo Interno
+1. `app.py` recibe la consulta y parámetros (radio, top-k).
+2. `utils.llm_processing.analyze_query` detecta cocina, rango de precio y ubicación.
+3. `utils.geolocation.search_restaurants` geocodifica y consulta Overpass + dataset local (con cache en Streamlit).
+4. `utils.ranking.rank_restaurants` puntúa por distancia, coincidencia de cocina, afinidad de precio y rating.
+5. `utils.llm_processing.generate_explanations` produce explicaciones (LLM o plantilla) y la UI las muestra.
 
-Opciones para usar un LLM local (manual):
-1. Instalar GPT4All: sigue las instrucciones oficiales (https://gpt4all.io) y luego `pip install gpt4all`.
-2. Colocar el modelo en la ruta que espere `gpt4all` o modificar `models/local_model_integration.py` para apuntar al archivo del modelo.
+## Desarrollo y Pruebas
+- Recomendado crear un entorno virtual y activar formateo/linters.
+- Puedes extender el dataset local con campos `rating`, `price_range`, etc.
+- Pendiente: añadir pruebas unitarias (`pytest`) para `analyze_query`, `rank_restaurants` y `resolve_location` (mockeando APIs).
+- Para evitar límites de Overpass, ajusta el radio o usa el dataset local como fallback.
 
-Notas sobre Overpass
-- No requiere clave. El endpoint público se usa por defecto (`overpass-api.de`). Respeta los límites de uso.
+## Próximos pasos sugeridos
+- Agregar visualización en mapa (folium/streamlit-folium).
+- Enriquecer `generated_reviews.csv` y mostrar reseñas/resúmenes con el LLM.
+- Documentar benchmarks y requisitos de hardware del modelo elegido.
+- Automatizar la descarga del modelo vía script cuando sea viable.
 
-Estructura
-```
-llm_restaurant_recommender/
-├── app.py
-├── utils/
-│   ├── geolocation.py
-│   ├── llm_processing.py
-│   └── ranking.py
-├── data/
-│   ├── restaurants_sample.csv
-│   └── generated_reviews.csv
-├── models/
-│   └── local_model_integration.py
-├── .cursor/
-│   └── rules/core.md
-└── README.md
-```
+## Créditos y Licencia
+- Datos: OpenStreetMap (Overpass API) y datasets generados por los autores.
+- Modelo recomendado: Microsoft Phi-3 Mini 4K Instruct (licencia MIT, ver repositorio de Hugging Face).
+- Licencia sugerida para este proyecto: MIT (ajusta según necesidades académicas).
 
-¿Qué hago por ti ahora?
-- Puedo ayudar a configurar un modelo local (darte los comandos para descargar e instalar GPT4All) o adaptar la integración a otro motor gratuito (Hugging Face). Dime si quieres que cree instrucciones concretas para alguno de ellos.
+Para dudas adicionales o contribuciones, abre un issue o contacta al equipo del curso.
