@@ -3,56 +3,72 @@ import os
 import re
 from typing import Dict, List, Optional
 
+import config
+
+from .logger import get_logger
+
+logger = get_logger(__name__)
+
 
 class ModelWrapper:
-    """Wrapper that tries multiple free/local LLM backends in order:
-    1. Hugging Face `transformers` local pipeline (if a model is installed locally).
-    2. GPT4All python binding (if installed and model available).
-    3. Fallback: returns None so callers can use template explanations.
-
-    Installation notes (choose one):
-    - Hugging Face (local):
-      * pip install transformers accelerate
-      * Download a compatible model (for CPU you may need a small model). Example (requires large disk/RAM):
-        - Use `transformers` to load `HuggingFaceH4/zephyr-7b-alpha` only if you have the hardware.
-      * Set environment variable HF_MODEL to the model id or local path.
-
-    - GPT4All (local):
-      * pip install gpt4all
-      * Download a quantized model from https://gpt4all.io and place it where gpt4all expects or pass path by editing `models/local_model_integration.py`.
-
-    Note: This wrapper avoids hard dependencies at import time; imports are attempted when generating text.
+    """Wrapper for Hugging Face transformers LLM (Phi-4).
+    
+    Uses the model specified in HF_MODEL environment variable.
+    The model is cached after first load to avoid reloading on every call.
+    
+    Installation:
+      pip install transformers accelerate torch
+      
+    Set environment variable:
+      $env:HF_MODEL = "microsoft/Phi-4-mini-instruct"
+    
+    If no model is available, returns None and callers use template explanations.
     """
 
     def __init__(self, hf_model: Optional[str] = None):
         self.hf_model = hf_model or os.environ.get("HF_MODEL")
+        self._hf_pipeline = None  # Cache for HF pipeline
+
+    def _load_hf_pipeline(self):
+        """Lazy load and cache the HuggingFace pipeline."""
+        if self._hf_pipeline is None and self.hf_model:
+            try:
+                logger.info(f"Loading HuggingFace model: {self.hf_model}")
+                from transformers import pipeline
+                self._hf_pipeline = pipeline(
+                    "text-generation", 
+                    model=self.hf_model, 
+                    device_map="auto"
+                )
+                logger.info(f"HuggingFace model loaded successfully: {self.hf_model}")
+            except Exception as e:
+                logger.error(f"Failed to load HuggingFace model: {e}")
+        return self._hf_pipeline
 
     def generate(self, prompt: str, max_new_tokens: int = 128) -> Optional[str]:
-        # Try Hugging Face transformers local pipeline
-        if self.hf_model:
+        """Generate text using Phi-4 model.
+        
+        Args:
+            prompt: Input prompt for generation
+            max_new_tokens: Maximum tokens to generate
+            
+        Returns:
+            Generated text or None if model not available
+        """
+        pipe = self._load_hf_pipeline()
+        if pipe is not None:
             try:
-                from transformers import pipeline
-
-                pipe = pipeline("text-generation", model=self.hf_model, device_map="auto")
+                logger.debug(f"Generating text with HuggingFace (max_tokens={max_new_tokens})")
                 out = pipe(prompt, max_new_tokens=max_new_tokens, do_sample=True, top_p=0.95)
                 if out and isinstance(out, list):
+                    logger.debug("HuggingFace generation successful")
                     return out[0].get("generated_text")
-            except Exception:
-                # fall through to next option
-                pass
-
-        # Try GPT4All python binding
-        try:
-            from gpt4all import GPT4All
-
-            model_name = "gpt4all-lora-quantized"
-            gpt = GPT4All(model_name)
-            resp = gpt.generate(prompt, max_tokens=max_new_tokens)
-            return resp
-        except Exception:
-            pass
+            except Exception as e:
+                logger.error(f"HuggingFace generation failed: {e}")
+                return None
 
         # No model available
+        logger.warning("No LLM model available (HF_MODEL not set or transformers not installed)")
         return None
 
 
@@ -76,7 +92,7 @@ def analyze_query(query: str) -> Dict:
     )
 
     try:
-        txt = _MODEL.generate(prompt, max_new_tokens=128)
+        txt = _MODEL.generate(prompt, max_new_tokens=config.LLM_MAX_TOKENS)
         if txt:
             # Extract JSON from response
             j = _extract_json_from_text(txt)
@@ -131,12 +147,18 @@ def analyze_query(query: str) -> Dict:
     elif any(k in q for k in ["medio", "media", "moderado", "moderada"]):
         result["price_range"] = "medium"
 
-    m = re.search(r"cerca de ([\w\sáéíóúñ]+)", q)
-    if not m:
-        m = re.search(r"(en|por|alrededor de) ([\w\sáéíóúñ]+)", q)
+    patterns = [
+        r"cerca\s+(?:de|del|de la|de los|de las|al|a la|a los|a las)\s+([\w\sáéíóúñ]+)",
+        r"(?:en|por|alrededor\s+de)\s+([\w\sáéíóúñ]+)",
+    ]
+    m = None
+    for pat in patterns:
+        m = re.search(pat, q)
+        if m:
+            place = m.group(1).strip()
+            break
     if m:
-        place = m.groups()[-1].strip()
-        place = re.sub(r"\b(barato|barata|baratos|baratas|económico|economico|cerca|por|en|alrededor|medio|moderado)\b", "", place).strip()
+        place = re.sub(r"\b(barato|barata|baratos|baratas|económico|economico|económica|economica|económicos|economicos|cerca|por|en|alrededor|del|de|de la|de los|de las|al|a|la|los|las|medio|media|moderado|moderada)\b", "", place).strip()
         result["location"] = place
 
     if not result["location"]:
@@ -158,7 +180,7 @@ def generate_explanations(user_query: str, restaurants: List[Dict]) -> List[str]
     for r in restaurants:
         prompt = _build_explanation_prompt(user_query, r)
         try:
-            txt = _MODEL.generate(prompt, max_new_tokens=80)
+            txt = _MODEL.generate(prompt, max_new_tokens=config.LLM_EXPLANATION_MAX_TOKENS)
             if txt:
                 # Keep only the first 1-2 sentences
                 s = _first_sentences(txt, max_sentences=2)

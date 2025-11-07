@@ -1,4 +1,3 @@
-import ast
 import time
 from pathlib import Path
 from typing import Optional, Tuple, Union
@@ -7,13 +6,19 @@ import pandas as pd
 import requests
 from geopy.geocoders import Nominatim
 
+from .common import safe_parse_tags
+from .logger import get_logger
 from .ranking import PRICE_SYMBOLS, haversine_meters
+from .rate_limiter import wait_for_nominatim, wait_for_overpass
+import config
 
-OVERPASS_URL = "http://overpass-api.de/api/interpreter"
+logger = get_logger(__name__)
+
+OVERPASS_URL = config.OVERPASS_URL
 
 _geolocator = Nominatim(user_agent="llm_restaurant_recommender")
 
-LOCAL_DATASET_PATH = Path(__file__).resolve().parents[1] / "data" / "restaurants_sample.csv"
+LOCAL_DATASET_PATH = Path(__file__).resolve().parents[1] / "data" / "restaurants_yelp.csv"
 
 
 def resolve_location(place_or_coords: Union[str, Tuple[float, float]]) -> Optional[Tuple[float, float]]:
@@ -26,6 +31,7 @@ def resolve_location(place_or_coords: Union[str, Tuple[float, float]]) -> Option
         (lat, lon) or None if resolution failed.
     """
     if not place_or_coords:
+        logger.warning("No location provided")
         return None
 
     # If already coordinates
@@ -33,16 +39,23 @@ def resolve_location(place_or_coords: Union[str, Tuple[float, float]]) -> Option
         try:
             lat = float(place_or_coords[0])
             lon = float(place_or_coords[1])
+            logger.debug(f"Using coordinates: ({lat}, {lon})")
             return lat, lon
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to parse coordinates: {e}")
             return None
 
     # Treat as string place name
     try:
+        logger.info(f"Geocoding location: {place_or_coords}")
+        wait_for_nominatim()  # Respect rate limits
         loc = _geolocator.geocode(str(place_or_coords), timeout=10)
         if loc:
+            logger.info(f"Geocoded '{place_or_coords}' to ({loc.latitude}, {loc.longitude})")
             return float(loc.latitude), float(loc.longitude)
-    except Exception:
+        logger.warning(f"Could not geocode location: {place_or_coords}")
+    except Exception as e:
+        logger.error(f"Geocoding error for '{place_or_coords}': {e}")
         return None
     return None
 
@@ -80,23 +93,14 @@ def _normalize_price_label(value: Optional[str]) -> str:
     }.get(lowered, "")
 
 
-def _safe_parse_tags(raw) -> dict:
-    if isinstance(raw, dict):
-        return raw
-    if not isinstance(raw, str):
-        return {}
-    try:
-        return ast.literal_eval(raw)
-    except Exception:
-        return {}
-
-
 def _load_local_dataset() -> pd.DataFrame:
     if not LOCAL_DATASET_PATH.exists():
         return pd.DataFrame()
     try:
         df = pd.read_csv(LOCAL_DATASET_PATH)
-    except Exception:
+        logger.debug(f"Loaded {len(df)} restaurants from local dataset")
+    except Exception as e:
+        logger.error(f"Failed to load local dataset: {e}")
         return pd.DataFrame()
 
     if df.empty or "lat" not in df.columns or "lon" not in df.columns:
@@ -106,7 +110,7 @@ def _load_local_dataset() -> pd.DataFrame:
         df["cuisine"] = ""
 
     if "tags" in df.columns:
-        parsed = df["tags"].apply(_safe_parse_tags)
+        parsed = df["tags"].apply(safe_parse_tags)
         df["tags"] = parsed
         if "price" not in df.columns:
             df["price"] = parsed.apply(lambda t: t.get("price") if isinstance(t, dict) else None)
@@ -174,15 +178,20 @@ out center;
 """.strip()
 
     attempt = 0
+    logger.info(f"Querying Overpass API (radius={radius}m, cuisine={cuisine or 'any'})")
     while attempt <= retries:
         try:
+            wait_for_overpass()  # Respect rate limits
             resp = requests.post(OVERPASS_URL, data={"data": query}, timeout=timeout + 5)
             resp.raise_for_status()
             data = resp.json()
+            logger.info(f"Overpass API request successful on attempt {attempt + 1}")
             break
-        except Exception:
+        except Exception as e:
             attempt += 1
+            logger.warning(f"Overpass request failed (attempt {attempt}/{retries + 1}): {e}")
             if attempt > retries:
+                logger.error("Overpass API request failed after all retries")
                 data = None
                 break
             time.sleep(1 + attempt * 1.5)
@@ -190,6 +199,7 @@ out center;
     rows = []
     if data:
         elements = data.get("elements", [])
+        logger.debug(f"Received {len(elements)} elements from Overpass")
         for el in elements:
             tags = el.get("tags", {}) or {}
             name = tags.get("name") or tags.get("operator") or ""

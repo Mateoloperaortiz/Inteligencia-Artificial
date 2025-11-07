@@ -1,6 +1,11 @@
-streamlit>=1.20
-pandas
-requests
-geopy
-# Optional (install if you want local GPT4All):
-# gpt4all
+# Core dependencies
+streamlit>=1.20,<2.0
+pandas>=2.0.0,<3.0
+requests>=2.31.0,<3.0
+geopy>=2.3.0,<3.0
+
+# LLM support (Phi-4 via Hugging Face transformers)
+transformers>=4.35.0,<5.0
+accelerate>=0.24.0,<1.0
+torch>=2.0.0,<3.0
+huggingface-hub>=0.20.0,<1.0

@@ -51,7 +51,7 @@ def build_overpass_query(lat: float, lon: float, radius: int, limit: int, cuisin
   relation["amenity"="restaurant"]{cuisine_filter}(around:{radius},{lat},{lon});
 );
 out center {limit};
-""".replace("{cuisine_filter}", cuisine_filter).strip()
+""".strip()
     return q
 
 

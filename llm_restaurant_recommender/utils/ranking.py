@@ -1,8 +1,10 @@
-import ast
 import math
 from typing import Optional, Tuple
 
 import pandas as pd
+
+from .common import safe_parse_tags
+from config import PRICE_SYMBOLS as CONFIG_PRICE_SYMBOLS, RANKING_WEIGHTS
 
 
 def haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -17,18 +19,7 @@ def haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> floa
     return R * c
 
 
-PRICE_SYMBOLS = {"$": "low", "$$": "medium", "$$$": "high", "$$$$": "high"}
-
-
-def _safe_parse_tags(raw):
-    if isinstance(raw, dict):
-        return raw
-    if not isinstance(raw, str):
-        return {}
-    try:
-        return ast.literal_eval(raw)
-    except Exception:
-        return {}
+PRICE_SYMBOLS = CONFIG_PRICE_SYMBOLS
 
 
 def _infer_price_bucket(row: pd.Series) -> str:
@@ -59,7 +50,7 @@ def _infer_price_bucket(row: pd.Series) -> str:
         except Exception:
             pass
 
-    tags = _safe_parse_tags(row.get("tags"))
+    tags = safe_parse_tags(row.get("tags"))
     if tags:
         tag_price = tags.get("price") or tags.get("price:class") or tags.get("cost")
         if tag_price:
@@ -93,7 +84,7 @@ def rank_restaurants(df: pd.DataFrame, prefs: dict, user_coords: Optional[Tuple[
     df = df.copy()
 
     if weights is None:
-        weights = {"distance": 0.5, "cuisine": 0.25, "price": 0.15, "rating": 0.1}
+        weights = RANKING_WEIGHTS
 
     # Ensure lat/lon exist
     if "lat" not in df.columns or "lon" not in df.columns:

@@ -16,8 +16,10 @@ import re
 from typing import Optional
 
 import pandas as pd
+import config
+from utils.llm_processing import ModelWrapper
 
-from models.local_model_integration import generate_text
+MODEL = ModelWrapper()
 
 
 def first_sentences(text: str, max_sentences: int = 2) -> str:
@@ -52,7 +54,7 @@ def generate_for_df(df: pd.DataFrame) -> pd.DataFrame:
     for _, row in df.iterrows():
         prompt = build_prompt(row)
         try:
-            txt = generate_text(prompt, max_tokens=120)
+            txt = MODEL.generate(prompt, max_new_tokens=config.LLM_EXPLANATION_MAX_TOKENS)
         except Exception:
             txt = None
 
@@ -71,7 +73,7 @@ def generate_for_df(df: pd.DataFrame) -> pd.DataFrame:
 
 def main():
     p = argparse.ArgumentParser(description='Generate synthetic reviews for restaurants CSV')
-    p.add_argument('--input', type=str, default='data/restaurants_sample.csv', help='Input CSV path')
+    p.add_argument('--input', type=str, default='data/restaurants_yelp.csv', help='Input CSV path')
     p.add_argument('--output', type=str, default='data/generated_reviews.csv', help='Output CSV path')
     args = p.parse_args()
 

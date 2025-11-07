@@ -1,11 +1,54 @@
+# Python
 .venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
 env/
 venv/
-*.sqlite3
+ENV/
+.Python
+
+# IDEs
 /.idea/
 /.vscode/
-llm_restaurant_recommender/models/phi-3-mini/
+.cursor/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Databases
+*.sqlite3
+*.db
+
+# Logs
+*.log
+logs/
+
+# Environment variables
+.env
+.env.local
+
+# Model cache (Hugging Face stores models in ~/.cache/huggingface/)
+# No local model files needed - everything is in HF cache
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Testing and Coverage
+.pytest_cache/
+htmlcov/
+.coverage
+*.cover
+.hypothesis/
+
+# OS specific
+Thumbs.db
+.DS_Store
