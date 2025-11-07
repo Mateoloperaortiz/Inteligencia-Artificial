@@ -1,66 +1,116 @@
+import time
+from typing import Tuple, Optional, Union
+
 import requests
 import pandas as pd
 from geopy.geocoders import Nominatim
-from math import radians, cos, sin, asin, sqrt
 
 OVERPASS_URL = "http://overpass-api.de/api/interpreter"
 
-geolocator = Nominatim(user_agent="llm_restaurant_recommender")
+_geolocator = Nominatim(user_agent="llm_restaurant_recommender")
 
 
-def geocode_location(place: str):
-    """Return (lat, lon) for a text place using Nominatim or None."""
-    try:
-        loc = geolocator.geocode(place)
-        if not loc:
-            return None
-        return (loc.latitude, loc.longitude)
-    except Exception:
+def resolve_location(place_or_coords: Union[str, Tuple[float, float]]) -> Optional[Tuple[float, float]]:
+    """Resolve a place name or return coordinates tuple.
+
+    Args:
+        place_or_coords: either a string with place name/address or a (lat, lon) tuple.
+
+    Returns:
+        (lat, lon) or None if resolution failed.
+    """
+    if not place_or_coords:
         return None
 
+    # If already coordinates
+    if isinstance(place_or_coords, (list, tuple)) and len(place_or_coords) == 2:
+        try:
+            lat = float(place_or_coords[0])
+            lon = float(place_or_coords[1])
+            return lat, lon
+        except Exception:
+            return None
 
-def haversine(lat1, lon1, lat2, lon2):
-    # distance in meters
-    lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
-    dlon = lon2 - lon1
-    dlat = lat2 - lat1
-    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
-    c = 2 * asin(sqrt(a))
-    R = 6371000
-    return R * c
+    # Treat as string place name
+    try:
+        loc = _geolocator.geocode(str(place_or_coords), timeout=10)
+        if loc:
+            return float(loc.latitude), float(loc.longitude)
+    except Exception:
+        return None
+    return None
 
 
-def search_restaurants_overpass(lat, lon, radius=1500, cuisine=None, max_results=50):
-    """Query Overpass for restaurants near lat,lon within radius (meters). Returns DataFrame."""
-    # Build Overpass QL
-    cuisine_filter = ''
+def _build_address_from_tags(tags: dict) -> str:
+    parts = []
+    if not tags:
+        return ""
+    for key in ["addr:street", "addr:housenumber", "addr:postcode", "addr:city", "addr:neighbourhood"]:
+        v = tags.get(key)
+        if v:
+            parts.append(str(v))
+    return ", ".join(parts)
+
+
+def search_restaurants(place_or_coords: Union[str, Tuple[float, float]], cuisine: Optional[str] = None, radius: int = 1500, timeout: int = 25, retries: int = 2) -> pd.DataFrame:
+    """Query Overpass API for restaurants near a location.
+
+    Args:
+        place_or_coords: place name (str) or (lat, lon) tuple.
+        cuisine: optional cuisine type (e.g., 'italiano'). If None, searches for generic restaurants.
+        radius: search radius in meters.
+        timeout: Overpass timeout in seconds.
+        retries: number of retries on HTTP/network errors.
+
+    Returns:
+        pandas.DataFrame with columns: name, cuisine, lat, lon, address, opening_hours
+    """
+    coords = resolve_location(place_or_coords)
+    if coords is None:
+        # Unable to resolve location — return empty DataFrame with columns
+        return pd.DataFrame(columns=["name", "cuisine", "lat", "lon", "address", "opening_hours"])
+
+    lat, lon = coords
+
+    # Build cuisine filter: if cuisine provided, filter by cuisine tag; otherwise search amenity=restaurant
+    cuisine_filter = ""
     if cuisine:
+        # match cuisine value or ingredient keywords
         cuisine_filter = f'["cuisine"~"{cuisine}",i]'
 
+    # Overpass QL
     query = f"""
-[out:json][timeout:25];
+[out:json][timeout:{timeout}];
 (
   node["amenity"="restaurant"]{cuisine_filter}(around:{radius},{lat},{lon});
   way["amenity"="restaurant"]{cuisine_filter}(around:{radius},{lat},{lon});
   relation["amenity"="restaurant"]{cuisine_filter}(around:{radius},{lat},{lon});
 );
-out center {max_results};
+out center;
 """.replace("{cuisine_filter}", cuisine_filter).strip()
 
-    try:
-        resp = requests.post(OVERPASS_URL, data={"data": query}, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception:
-        # Return empty DataFrame on error
-        return pd.DataFrame()
+    attempt = 0
+    while attempt <= retries:
+        try:
+            resp = requests.post(OVERPASS_URL, data={"data": query}, timeout=timeout + 5)
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except Exception:
+            attempt += 1
+            if attempt > retries:
+                # return empty dataframe on persistent failure
+                return pd.DataFrame(columns=["name", "cuisine", "lat", "lon", "address", "opening_hours"])
+            time.sleep(1 + attempt * 1.5)
 
     elements = data.get("elements", [])
     rows = []
     for el in elements:
-        tags = el.get("tags", {})
+        tags = el.get("tags", {}) or {}
         name = tags.get("name") or tags.get("operator") or ""
-        cuisine_tag = tags.get("cuisine", "").split(';')[0] if tags.get("cuisine") else ""
+        cuisine_tag = tags.get("cuisine", "")
+        opening = tags.get("opening_hours") or ""
+
         if el.get("type") == "node":
             rlat = el.get("lat")
             rlon = el.get("lon")
@@ -68,13 +118,20 @@ out center {max_results};
             center = el.get("center") or {}
             rlat = center.get("lat")
             rlon = center.get("lon")
+
         if rlat is None or rlon is None:
             continue
-        dist = haversine(lat, lon, rlat, rlon)
-        rows.append({"id": el.get("id"), "name": name, "lat": rlat, "lon": rlon, "cuisine": cuisine_tag, "tags": tags, "distance_m": int(dist)})
 
-    df = pd.DataFrame(rows)
-    if df.empty:
-        return df
-    df = df.sort_values(by=["distance_m"]).reset_index(drop=True)
+        address = _build_address_from_tags(tags)
+
+        rows.append({
+            "name": name,
+            "cuisine": cuisine_tag,
+            "lat": float(rlat),
+            "lon": float(rlon),
+            "address": address,
+            "opening_hours": opening,
+        })
+
+    df = pd.DataFrame(rows, columns=["name", "cuisine", "lat", "lon", "address", "opening_hours"])
     return df
