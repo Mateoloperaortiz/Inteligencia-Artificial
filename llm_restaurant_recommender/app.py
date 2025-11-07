@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
 
-from utils.geolocation import geocode_location, search_restaurants_overpass
-from utils.llm_processing import parse_query, generate_explanations
+from utils.geolocation import resolve_location, search_restaurants
+from utils.llm_processing import analyze_query, generate_explanations
 from utils.ranking import rank_restaurants
 
 st.set_page_config(page_title="Asistente LLM - Recomendador de Restaurantes", layout="centered")
@@ -17,38 +17,47 @@ with st.form("query_form"):
 
 if submitted and user_query.strip():
     st.info("Procesando consulta...")
-    prefs = parse_query(user_query)
+    prefs = analyze_query(user_query)
     st.write("Preferencias detectadas:", prefs)
 
-    # Resolve location
+    # Determine location (ask user if not detected)
     loc_text = prefs.get("location") or ""
     if not loc_text:
-        st.warning("No se detectó ubicación en la consulta. Por favor añade una ubicación (ej: 'Poblado').")
+        loc_text = st.text_input("No detecté ubicación — escribe una ubicación o barrio:")
+
     coords = None
     if loc_text:
-        coords = geocode_location(loc_text)
+        coords = resolve_location(loc_text)
         if coords is None:
             st.error(f"No pude geocodificar la ubicación: {loc_text}")
         else:
-            st.write(f"Ubicación: {loc_text} → {coords}")
+            st.write(f"Ubicación resuelta: {loc_text} → {coords}")
 
     if coords is not None:
-        df = search_restaurants_overpass(coords[0], coords[1], radius, cuisine=prefs.get("cuisine"))
+        # Call search_restaurants with either coords or text; our function accepts both
+        df = search_restaurants(coords, cuisine=prefs.get("cuisine"), radius=radius)
         if df.empty:
             st.warning("No se encontraron restaurantes en la zona con esos criterios.")
         else:
-            df_ranked = rank_restaurants(df, prefs)
+            # Rank using user coordinates
+            df_ranked = rank_restaurants(df, prefs, user_coords=coords)
             top = df_ranked.head(int(top_k)).copy()
 
             # Generate explanations (LLM or fallback)
             explanations = generate_explanations(user_query, top.to_dict(orient="records"))
             top["explanation"] = explanations
 
+            st.subheader(f"Top {len(top)} resultados")
             for idx, row in top.iterrows():
-                with st.expander(f"{row.get('name','(sin nombre)')} — {row.get('distance_m', '?')} m"):
-                    st.write("Cocina:", row.get("cuisine", "—"))
-                    st.write("Dirección / tags:", row.get("tags", {}))
-                    st.write(row.get("explanation", ""))
+                name = row.get("name") or "(sin nombre)"
+                address = row.get("address") or "Dirección no disponible"
+                dist = int(row.get("distance_m") or 0)
+                explanation = row.get("explanation") or ""
+                with st.expander(f"{name} — {dist} m"):
+                    st.markdown(f"**{name}**")
+                    st.write(address)
+                    st.write(f"Distancia: {dist} m")
+                    st.write(explanation)
 
             st.success(f"Mostrando {len(top)} resultados.")
 
