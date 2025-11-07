@@ -1,13 +1,19 @@
+import ast
 import time
-from typing import Tuple, Optional, Union
+from pathlib import Path
+from typing import Optional, Tuple, Union
 
-import requests
 import pandas as pd
+import requests
 from geopy.geocoders import Nominatim
+
+from .ranking import PRICE_SYMBOLS, haversine_meters
 
 OVERPASS_URL = "http://overpass-api.de/api/interpreter"
 
 _geolocator = Nominatim(user_agent="llm_restaurant_recommender")
+
+LOCAL_DATASET_PATH = Path(__file__).resolve().parents[1] / "data" / "restaurants_sample.csv"
 
 
 def resolve_location(place_or_coords: Union[str, Tuple[float, float]]) -> Optional[Tuple[float, float]]:
@@ -52,6 +58,85 @@ def _build_address_from_tags(tags: dict) -> str:
     return ", ".join(parts)
 
 
+def _normalize_price_label(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    value = str(value).strip()
+    if value in PRICE_SYMBOLS:
+        return PRICE_SYMBOLS[value]
+    lowered = value.lower()
+    return {
+        "low": "low",
+        "medio": "medium",
+        "media": "medium",
+        "medium": "medium",
+        "moderado": "medium",
+        "moderada": "medium",
+        "high": "high",
+        "alto": "high",
+        "alta": "high",
+        "bajo": "low",
+        "baja": "low",
+    }.get(lowered, "")
+
+
+def _safe_parse_tags(raw) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str):
+        return {}
+    try:
+        return ast.literal_eval(raw)
+    except Exception:
+        return {}
+
+
+def _load_local_dataset() -> pd.DataFrame:
+    if not LOCAL_DATASET_PATH.exists():
+        return pd.DataFrame()
+    try:
+        df = pd.read_csv(LOCAL_DATASET_PATH)
+    except Exception:
+        return pd.DataFrame()
+
+    if df.empty or "lat" not in df.columns or "lon" not in df.columns:
+        return pd.DataFrame()
+
+    if "cuisine" not in df.columns:
+        df["cuisine"] = ""
+
+    if "tags" in df.columns:
+        parsed = df["tags"].apply(_safe_parse_tags)
+        df["tags"] = parsed
+        if "price" not in df.columns:
+            df["price"] = parsed.apply(lambda t: t.get("price") if isinstance(t, dict) else None)
+        if "price_range" not in df.columns:
+            df["price_range"] = parsed.apply(lambda t: _normalize_price_label(t.get("price")) if isinstance(t, dict) else "")
+        else:
+            mask = df["price_range"].isna() | (df["price_range"].astype(str).str.strip() == "")
+            df.loc[mask, "price_range"] = parsed[mask].apply(lambda t: _normalize_price_label(t.get("price")) if isinstance(t, dict) else "")
+    else:
+        df["tags"] = [{}] * len(df)
+
+    if "price_range" not in df.columns:
+        df["price_range"] = df.get("price", "").apply(_normalize_price_label)
+
+    df["source"] = "local_dataset"
+    return df
+
+
+def _filter_within_radius(df: pd.DataFrame, center: Tuple[float, float], radius: int) -> pd.DataFrame:
+    if df.empty:
+        return df
+    lat, lon = center
+    df = df.copy()
+    df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
+    df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
+    df = df.dropna(subset=["lat", "lon"])
+    df["distance_m"] = df.apply(lambda row: haversine_meters(lat, lon, float(row["lat"]), float(row["lon"])), axis=1)
+    return df[df["distance_m"] <= radius].reset_index(drop=True)
+
+
 def search_restaurants(place_or_coords: Union[str, Tuple[float, float]], cuisine: Optional[str] = None, radius: int = 1500, timeout: int = 25, retries: int = 2) -> pd.DataFrame:
     """Query Overpass API for restaurants near a location.
 
@@ -75,7 +160,6 @@ def search_restaurants(place_or_coords: Union[str, Tuple[float, float]], cuisine
     # Build cuisine filter: if cuisine provided, filter by cuisine tag; otherwise search amenity=restaurant
     cuisine_filter = ""
     if cuisine:
-        # match cuisine value or ingredient keywords
         cuisine_filter = f'["cuisine"~"{cuisine}",i]'
 
     # Overpass QL
@@ -87,7 +171,7 @@ def search_restaurants(place_or_coords: Union[str, Tuple[float, float]], cuisine
   relation["amenity"="restaurant"]{cuisine_filter}(around:{radius},{lat},{lon});
 );
 out center;
-""".replace("{cuisine_filter}", cuisine_filter).strip()
+""".strip()
 
     attempt = 0
     while attempt <= retries:
@@ -99,39 +183,68 @@ out center;
         except Exception:
             attempt += 1
             if attempt > retries:
-                # return empty dataframe on persistent failure
-                return pd.DataFrame(columns=["name", "cuisine", "lat", "lon", "address", "opening_hours"])
+                data = None
+                break
             time.sleep(1 + attempt * 1.5)
 
-    elements = data.get("elements", [])
     rows = []
-    for el in elements:
-        tags = el.get("tags", {}) or {}
-        name = tags.get("name") or tags.get("operator") or ""
-        cuisine_tag = tags.get("cuisine", "")
-        opening = tags.get("opening_hours") or ""
+    if data:
+        elements = data.get("elements", [])
+        for el in elements:
+            tags = el.get("tags", {}) or {}
+            name = tags.get("name") or tags.get("operator") or ""
+            cuisine_tag = tags.get("cuisine", "")
+            opening = tags.get("opening_hours") or ""
 
-        if el.get("type") == "node":
-            rlat = el.get("lat")
-            rlon = el.get("lon")
-        else:
-            center = el.get("center") or {}
-            rlat = center.get("lat")
-            rlon = center.get("lon")
+            if el.get("type") == "node":
+                rlat = el.get("lat")
+                rlon = el.get("lon")
+            else:
+                center = el.get("center") or {}
+                rlat = center.get("lat")
+                rlon = center.get("lon")
 
-        if rlat is None or rlon is None:
-            continue
+            if rlat is None or rlon is None:
+                continue
 
-        address = _build_address_from_tags(tags)
+            address = _build_address_from_tags(tags)
+            price = tags.get("price") or tags.get("price:class")
+            price_range = _normalize_price_label(price)
 
-        rows.append({
-            "name": name,
-            "cuisine": cuisine_tag,
-            "lat": float(rlat),
-            "lon": float(rlon),
-            "address": address,
-            "opening_hours": opening,
-        })
+            rows.append({
+                "name": name,
+                "cuisine": cuisine_tag,
+                "lat": float(rlat),
+                "lon": float(rlon),
+                "address": address,
+                "opening_hours": opening,
+                "price": price,
+                "price_range": price_range,
+                "tags": tags,
+                "source": "overpass",
+            })
 
-    df = pd.DataFrame(rows, columns=["name", "cuisine", "lat", "lon", "address", "opening_hours"])
-    return df
+    df_overpass = pd.DataFrame(rows)
+
+    local_df = _load_local_dataset()
+    if cuisine:
+        cuisine_lower = cuisine.lower()
+        local_df = local_df[local_df["cuisine"].fillna("").str.lower().str.contains(cuisine_lower, na=False)] if not local_df.empty else local_df
+    local_df = _filter_within_radius(local_df, coords, radius) if not local_df.empty else local_df
+
+    if df_overpass.empty and local_df.empty:
+        return pd.DataFrame(columns=["name", "cuisine", "lat", "lon", "address", "opening_hours", "price", "price_range", "tags", "source", "distance_m"])
+
+    frames = []
+    if not df_overpass.empty:
+        df_overpass = _filter_within_radius(df_overpass, coords, radius)
+        frames.append(df_overpass)
+    if not local_df.empty:
+        frames.append(local_df)
+
+    if not frames:
+        return pd.DataFrame(columns=["name", "cuisine", "lat", "lon", "address", "opening_hours", "price", "price_range", "tags", "source", "distance_m"])
+
+    combined = pd.concat(frames, ignore_index=True)
+    combined = combined.drop_duplicates(subset=["name", "lat", "lon"], keep="first")
+    return combined.reset_index(drop=True)

@@ -8,3 +8,4 @@ venv/
 *.sqlite3
 /.idea/
 /.vscode/
+llm_restaurant_recommender/models/phi-3-mini/

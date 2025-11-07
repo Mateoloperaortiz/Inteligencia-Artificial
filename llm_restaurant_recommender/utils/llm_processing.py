@@ -1,7 +1,6 @@
-import re
-import re
 import json
 import os
+import re
 from typing import Dict, List, Optional
 
 
@@ -72,8 +71,8 @@ def analyze_query(query: str) -> Dict:
     # Try LLM-based parsing first (prompt expects JSON only)
     prompt = (
         "Extract from the user's query the following fields as JSON: cuisine, price_range, location. "
-        "Return only a JSON object. Fields should be empty string if unknown. "
-        f"User query: '''{query}'''.\n\nExample output:\n{{\n  \"cuisine\": \"italiano\",\n  \"price_range\": \"low\",\n+  \"location\": \"El Poblado\"\n}}"
+        "Return only a JSON object. Fields should be the empty string when the information is missing. "
+        f"User query: '''{query}'''.\n\nExample output:\n{{\n  \"cuisine\": \"italiano\",\n  \"price_range\": \"low\",\n  \"location\": \"El Poblado\"\n}}"
     )
 
     try:
@@ -98,39 +97,50 @@ def analyze_query(query: str) -> Dict:
 
     cuisines = [
         "italiano",
+        "italiana",
         "chino",
+        "china",
         "japonés",
         "japones",
         "sushi",
         "mexicano",
+        "mexicana",
         "vegetariano",
         "vegano",
+        "vegana",
         "hamburguesa",
         "pizza",
         "peruano",
+        "peruana",
         "francés",
         "frances",
+        "india",
+        "thai",
+        "tailandés",
+        "tapas",
     ]
     for c in cuisines:
         if c in q:
             result["cuisine"] = c
             break
 
-    if any(k in q for k in ["barato", "económico", "económica", "económicos"]):
+    if any(k in q for k in ["barato", "económico", "economico", "económica", "economica", "económicos", "economicos", "asequible", "asequibles"]):
         result["price_range"] = "low"
-    elif any(k in q for k in ["caro", "costoso", "lujoso"]):
+    elif any(k in q for k in ["caro", "costoso", "costosa", "lujoso", "lujosa", "exclusivo", "exclusiva"]):
         result["price_range"] = "high"
+    elif any(k in q for k in ["medio", "media", "moderado", "moderada"]):
+        result["price_range"] = "medium"
 
-    m = re.search(r"cerca de ([\w\sáéíóúÑñ]+)", q)
+    m = re.search(r"cerca de ([\w\sáéíóúñ]+)", q)
     if not m:
-        m = re.search(r"en ([\w\sáéíóúÑñ]+)", q)
+        m = re.search(r"(en|por|alrededor de) ([\w\sáéíóúñ]+)", q)
     if m:
-        place = m.group(1).strip()
-        place = re.sub(r"\b(barato|barata|baratos|baratas|económico|cerca)\b", "", place).strip()
+        place = m.groups()[-1].strip()
+        place = re.sub(r"\b(barato|barata|baratos|baratas|económico|economico|cerca|por|en|alrededor|medio|moderado)\b", "", place).strip()
         result["location"] = place
 
     if not result["location"]:
-        neighborhoods = ["poblado", "centro", "laureles", "envigado", "belén"]
+        neighborhoods = ["poblado", "el poblado", "centro", "laureles", "envigado", "belén", "belen", "sabaneta", "itagüí", "itagui"]
         for n in neighborhoods:
             if n in q:
                 result["location"] = n
@@ -182,9 +192,14 @@ def _first_sentences(text: str, max_sentences: int = 2) -> str:
 def _fallback_explanation(user_query: str, r: Dict) -> str:
     name = r.get("name") or "Este restaurante"
     cuisine = r.get("cuisine") or "cocina variada"
-    dist = r.get("distance_m", "cerca")
-    price_hint = "posible opción económica" if "barato" in user_query.lower() or "económico" in user_query.lower() else ""
-    return f"{name}: Cocina {cuisine}. A {dist} metros — buena opción para tu búsqueda. {price_hint}".strip()
+    dist = r.get("distance_m") or r.get("distance") or "cerca"
+    price_range = r.get("price_range") or r.get("price") or "precio no disponible"
+    if isinstance(price_range, (int, float)):
+        price_text = f"precio aproximado {price_range}"
+    else:
+        price_text = str(price_range)
+    hint = "pensado en opciones económicas" if ("barato" in user_query.lower() or "econ" in user_query.lower()) else ""
+    return f"{name}: Cocina {cuisine}. A {dist} metros. {price_text}. {hint}".strip()
 
 
 def _extract_json_from_text(text: str) -> Optional[Dict]:

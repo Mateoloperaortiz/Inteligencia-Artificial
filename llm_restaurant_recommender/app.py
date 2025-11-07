@@ -1,5 +1,4 @@
 import streamlit as st
-import pandas as pd
 
 from utils.geolocation import resolve_location, search_restaurants
 from utils.llm_processing import analyze_query, generate_explanations
@@ -8,6 +7,11 @@ from utils.ranking import rank_restaurants
 st.set_page_config(page_title="Asistente LLM - Recomendador de Restaurantes", layout="centered")
 
 st.title("Asistente LLM: Recomendador de restaurantes (OpenStreetMap)")
+
+
+@st.cache_data(show_spinner=False, ttl=600)
+def cached_restaurant_search(location_key, cuisine, radius):
+    return search_restaurants(location_key, cuisine=cuisine, radius=radius)
 
 with st.form("query_form"):
     user_query = st.text_input("¿Qué buscas?", placeholder="Ej: Quiero un restaurante italiano barato cerca del Poblado")
@@ -34,8 +38,8 @@ if submitted and user_query.strip():
             st.write(f"Ubicación resuelta: {loc_text} → {coords}")
 
     if coords is not None:
-        # Call search_restaurants with either coords or text; our function accepts both
-        df = search_restaurants(coords, cuisine=prefs.get("cuisine"), radius=radius)
+        # Call cached search (handles remote API + dataset fallback)
+        df = cached_restaurant_search((coords[0], coords[1]), cuisine=prefs.get("cuisine"), radius=radius)
         if df.empty:
             st.warning("No se encontraron restaurantes en la zona con esos criterios.")
         else:
@@ -52,12 +56,18 @@ if submitted and user_query.strip():
                 name = row.get("name") or "(sin nombre)"
                 address = row.get("address") or "Dirección no disponible"
                 dist = int(row.get("distance_m") or 0)
+                price_range = row.get("price_range") or row.get("price") or "precio no disponible"
+                opening = row.get("opening_hours") or "Horario no informado"
+                source = row.get("source") or "fuente desconocida"
                 explanation = row.get("explanation") or ""
                 with st.expander(f"{name} — {dist} m"):
                     st.markdown(f"**{name}**")
                     st.write(address)
                     st.write(f"Distancia: {dist} m")
+                    st.write(f"Precio estimado: {price_range}")
+                    st.write(f"Horario: {opening}")
                     st.write(explanation)
+                    st.caption(f"Fuente de datos: {source}")
 
             st.success(f"Mostrando {len(top)} resultados.")
 
